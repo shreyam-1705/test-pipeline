@@ -3,9 +3,9 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
 
-# Initialize PySpark (Now with MD5 Validation Disabled!)
+# Initialize PySpark with MD5 Validation Disabled!
 spark = SparkSession.builder \
-    .appName("HF_Decoupled_Pipeline") \
+    .appName("HF_Memory_Branch_Pipeline") \
     .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
@@ -27,7 +27,7 @@ hadoop_conf.set("fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.Sim
 bronze_path = f"s3a://{bucket_name}/bronze_table"
 silver_path = f"s3a://{bucket_name}/silver_table"
 
-# 1. Connect to Kafka for Bronze ingestion
+# Connect to Kafka
 kafka_df = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", os.getenv("KAFKA_URI")) \
@@ -50,23 +50,17 @@ schema = StructType([
 parsed_df = kafka_df.selectExpr("CAST(value AS STRING) as json_str") \
     .select(from_json("json_str", schema).alias("data")).select("data.*")
 
-# 2. Write Stream to Bronze
+# Write EVERYTHING to Bronze
 bronze_query = parsed_df.writeStream \
     .format("delta") \
     .option("checkpointLocation", "/tmp/checkpoints/bronze") \
     .start(bronze_path)
 
-# 3. Read Stream directly from Bronze Storage Path
-silver_df = spark.readStream \
-    .format("delta") \
-    .load(bronze_path) \
-    .filter(col("value") > 50.0)
-
-# 4. Write Stream to Silver
-silver_query = silver_df.writeStream \
+# Branch the stream IN MEMORY for Silver (Filter for values > 50.0)
+silver_query = parsed_df.filter(col("value") > 50.0).writeStream \
     .format("delta") \
     .option("checkpointLocation", "/tmp/checkpoints/silver") \
     .start(silver_path)
 
-print("Decoupled Pipeline started! Writing to Bronze and reading from Bronze to feed Silver...")
+print("Pipeline started! Writing to Bronze and Silver simultaneously...")
 spark.streams.awaitAnyTermination(timeout=1800)
