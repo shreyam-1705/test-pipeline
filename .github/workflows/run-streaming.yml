@@ -21,7 +21,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install Dependencies
-        run: pip install pyspark==3.5.0 aiven-client
+        run: pip install pyspark==3.5.0 aiven-client delta-spark huggingface_hub
 
       - name: Get GitHub Runner IP
         id: ip
@@ -31,17 +31,15 @@ jobs:
         env:
           AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
         run: |
-          # Wrap the IP in brackets and single quotes to satisfy Aiven's literal_eval
           avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
             --project ${{ vars.AIVEN_PROJECT_NAME }} \
             -c ip_filter="['${{ steps.ip.outputs.ipv4 }}/32']"
 
-      - name: Create Java Keystores for PySpark
+      - name: Create Java Keystores
         run: |
           echo "${{ secrets.KAFKA_CA_PEM }}" > ca.pem
           echo "${{ secrets.KAFKA_SERVICE_CERT }}" > service.cert
           echo "${{ secrets.KAFKA_SERVICE_KEY }}" > service.key
-          
           openssl pkcs12 -export -in service.cert -inkey service.key -out keystore.p12 -name kafka -password pass:changeit
           keytool -import -file ca.pem -alias CARoot -keystore truststore.jks -storepass changeit -noprompt
 
@@ -50,8 +48,7 @@ jobs:
           KAFKA_URI: ${{ vars.KAFKA_URI }}
           HF_NAMESPACE: ${{ vars.HF_NAMESPACE }}
           HF_BUCKET_NAME: ${{ vars.HF_BUCKET_NAME }}
-          HF_S3_ACCESS_KEY: ${{ secrets.HF_S3_ACCESS_KEY }}
-          HF_S3_SECRET_KEY: ${{ secrets.HF_S3_SECRET_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }} 
         run: python streaming_job.py
 
       - name: Cleanup Firewall
@@ -59,7 +56,6 @@ jobs:
         env:
           AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
         run: |
-          # Wrap the fallback IP in brackets and single quotes
           avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
             --project ${{ vars.AIVEN_PROJECT_NAME }} \
             -c ip_filter="['0.0.0.0/0']"
