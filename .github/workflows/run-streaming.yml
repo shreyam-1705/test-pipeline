@@ -28,8 +28,9 @@ jobs:
         run: echo "ipv4=$(curl -s https://api.ipify.org)" >> $GITHUB_OUTPUT
 
       - name: Allow Runner IP in Aiven
+        env:
+          AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
         run: |
-          avn user login --token "${{ secrets.AIVEN_TOKEN }}"
           avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
             --project ${{ vars.AIVEN_PROJECT_NAME }} \
             -c ip_filter=${{ steps.ip.outputs.ipv4 }}/32
@@ -54,8 +55,9 @@ jobs:
 
       - name: Cleanup Firewall
         if: always()
+        env:
+          AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
         run: |
-          avn user login --token "${{ secrets.AIVEN_TOKEN }}"
           avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
             --project ${{ vars.AIVEN_PROJECT_NAME }} \
             -c ip_filter=0.0.0.0/0
