@@ -2,7 +2,7 @@ import os
 import time
 import threading
 import sys
-from huggingface_hub import HfApi
+from huggingface_hub import create_bucket, sync_bucket
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
@@ -10,20 +10,23 @@ from pyspark import SparkFiles
 
 # --- 1. THE SYNCER THREAD ---
 def sync_to_huggingface():
-    api = HfApi(token=os.getenv("HF_TOKEN"))
-    repo_id = f"{os.getenv('HF_NAMESPACE')}/{os.getenv('HF_BUCKET_NAME')}"
-    print(f"Sync thread active for: {repo_id}")
+    bucket_id = f"{os.getenv('HF_NAMESPACE')}/{os.getenv('HF_BUCKET_NAME')}"
+    token = os.getenv("HF_TOKEN")
+
+    # Make sure the bucket exists before we start syncing into it
+    create_bucket(bucket_id, token=token, exist_ok=True)
+
+    print(f"Sync thread active for: hf://buckets/{bucket_id}")
     while True:
         time.sleep(60)
         try:
             for table in ["bronze_table", "silver_table"]:
                 local_path = f"/tmp/{table}"
                 if os.path.exists(local_path):
-                    api.upload_folder(
-                        folder_path=local_path,
-                        repo_id=repo_id,
-                        repo_type="dataset",
-                        path_in_repo=table,
+                    sync_bucket(
+                        local_path,
+                        f"hf://buckets/{bucket_id}/{table}",
+                        token=token,
                         ignore_patterns=["*.tmp", "*.crc", ".*"]
                     )
             print("Sync cycle successful.")
@@ -64,8 +67,8 @@ kafka_df = spark.readStream \
     .load()
 
 schema = StructType([
-    StructField("id", IntegerType()), 
-    StructField("sensor_name", StringType()), 
+    StructField("id", IntegerType()),
+    StructField("sensor_name", StringType()),
     StructField("value", DoubleType())
 ])
 parsed_df = kafka_df.selectExpr("CAST(value AS STRING) as json_str") \
@@ -82,4 +85,4 @@ try:
     query.awaitTermination()
 except Exception:
     print(f"Query terminated with exception: {query.exception()}")
-    sys.exit(1) # Force GitHub Actions to fail if streaming fails
+    sys.exit(1)  # Force GitHub Actions to fail if streaming fails
