@@ -2,12 +2,34 @@ import os
 import time
 import threading
 import sys
+import inspect
 import traceback
+import huggingface_hub
 from huggingface_hub import create_bucket, sync_bucket
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
 from pyspark import SparkFiles
+
+print(f"[sync] huggingface_hub version: {huggingface_hub.__version__}", flush=True)
+
+# Figure out, once, which keyword sync_bucket actually accepts on this
+# installed version, instead of hardcoding a name that may not match
+# (older/newer huggingface_hub releases have used different kwarg names).
+_SYNC_PARAMS = set(inspect.signature(sync_bucket).parameters.keys())
+print(f"[sync] sync_bucket accepts: {sorted(_SYNC_PARAMS)}", flush=True)
+
+_FILTER_PATTERNS = ["*.tmp", "*.crc", ".*"]
+
+def _sync_kwargs():
+    """Build kwargs for sync_bucket, only including a filter arg if supported."""
+    kwargs = {}
+    if "exclude" in _SYNC_PARAMS:
+        kwargs["exclude"] = _FILTER_PATTERNS
+    elif "ignore_patterns" in _SYNC_PARAMS:
+        kwargs["ignore_patterns"] = _FILTER_PATTERNS
+    # If neither exists, sync everything unfiltered rather than crash.
+    return kwargs
 
 # --- 1. THE SYNCER THREAD ---
 def sync_to_huggingface():
@@ -16,18 +38,16 @@ def sync_to_huggingface():
     token = os.getenv("HF_TOKEN")
     bucket_id = f"{namespace}/{bucket_name}"
 
-    # Debug: confirm env vars actually made it into this process
     print(f"[sync] HF_NAMESPACE={namespace} HF_BUCKET_NAME={bucket_name} "
           f"HF_TOKEN={'set' if token else 'MISSING'}", flush=True)
 
-    # Retry bucket creation instead of letting one failure kill the thread forever
     while True:
         try:
             create_bucket(bucket_id, token=token, exist_ok=True)
             print(f"[sync] Bucket ready: hf://buckets/{bucket_id}", flush=True)
             break
         except Exception:
-            print(f"[sync] create_bucket failed, retrying in 30s:", flush=True)
+            print("[sync] create_bucket failed, retrying in 30s:", flush=True)
             traceback.print_exc()
             time.sleep(30)
 
@@ -42,7 +62,7 @@ def sync_to_huggingface():
                         local_path,
                         f"hf://buckets/{bucket_id}/{table}",
                         token=token,
-                        ignore_patterns=["*.tmp", "*.crc", ".*"]
+                        **_sync_kwargs()
                     )
                 else:
                     print(f"[sync] {local_path} does not exist yet, skipping", flush=True)
