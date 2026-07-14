@@ -31,9 +31,10 @@ jobs:
         env:
           AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
         run: |
+          # Wrap the IP in brackets and single quotes to satisfy Aiven's literal_eval
           avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
             --project ${{ vars.AIVEN_PROJECT_NAME }} \
-            -c ip_filter=${{ steps.ip.outputs.ipv4 }}/32
+            -c ip_filter="['${{ steps.ip.outputs.ipv4 }}/32']"
 
       - name: Create Java Keystores for PySpark
         run: |
@@ -58,6 +59,7 @@ jobs:
         env:
           AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
         run: |
+          # Wrap the fallback IP in brackets and single quotes
           avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
             --project ${{ vars.AIVEN_PROJECT_NAME }} \
-            -c ip_filter=0.0.0.0/0
+            -c ip_filter="['0.0.0.0/0']"
