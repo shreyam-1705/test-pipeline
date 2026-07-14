@@ -5,7 +5,9 @@ from huggingface_hub import HfApi
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
+from pyspark import SparkFiles
 
+# --- 1. THE SYNCER THREAD ---
 def sync_to_huggingface():
     api = HfApi(token=os.getenv("HF_TOKEN"))
     repo_id = f"{os.getenv('HF_NAMESPACE')}/{os.getenv('HF_BUCKET_NAME')}"
@@ -16,41 +18,56 @@ def sync_to_huggingface():
                 local_path = f"/tmp/{table}"
                 if os.path.exists(local_path):
                     api.upload_folder(
-                        folder_path=local_path,
-                        repo_id=repo_id,
-                        repo_type="dataset",
-                        path_in_repo=table,
-                        ignore_patterns=["*.tmp", "*.crc", ".*"]
+                        folder_path=local_path, repo_id=repo_id, repo_type="dataset",
+                        path_in_repo=table, ignore_patterns=["*.tmp", "*.crc", ".*"]
                     )
         except Exception as e:
             print(f"Sync error: {e}")
 
 threading.Thread(target=sync_to_huggingface, daemon=True).start()
 
+# --- 2. THE PYSPARK ENGINE ---
 spark = SparkSession.builder \
     .appName("HF_Local_Sync_Pipeline") \
     .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,io.delta:delta-spark_2.12:3.1.0") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .getOrCreate()
 
+# Add JKS/PKCS12 files to executor context
+spark.sparkContext.addFile("truststore.jks")
+spark.sparkContext.addFile("keystore.p12")
+
+# --- 3. FOREACHBATCH WRITER ---
+def write_batches(df, epoch_id):
+    # Write to Bronze
+    df.write.format("delta").mode("append").save("/tmp/bronze_table")
+    # Write to Silver (filtered)
+    df.filter(col("value") > 50.0).write.format("delta").mode("append").save("/tmp/silver_table")
+
+# Kafka source with bounded offsets
 kafka_df = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", os.getenv("KAFKA_URI")) \
     .option("subscribe", "test-topic") \
     .option("startingOffsets", "earliest") \
+    .option("maxOffsetsPerTrigger", 10000) \
     .option("kafka.security.protocol", "SSL") \
-    .option("kafka.ssl.truststore.location", "truststore.jks") \
-    .option("kafka.ssl.truststore.password", "changeit") \
-    .option("kafka.ssl.keystore.type", "PKCS12") \
-    .option("kafka.ssl.keystore.location", "keystore.p12") \
-    .option("kafka.ssl.keystore.password", "changeit") \
+    .option("kafka.ssl.truststore.location", SparkFiles.get("truststore.jks")) \
+    .option("kafka.ssl.keystore.location", SparkFiles.get("keystore.p12")) \
     .load()
 
 schema = StructType([StructField("id", IntegerType()), StructField("sensor_name", StringType()), StructField("value", DoubleType())])
 parsed_df = kafka_df.selectExpr("CAST(value AS STRING) as json_str").select(from_json("json_str", schema).alias("data")).select("data.*")
 
-parsed_df.writeStream.format("delta").option("checkpointLocation", "/tmp/checkpoints/bronze").start("/tmp/bronze_table")
-parsed_df.filter(col("value") > 50.0).writeStream.format("delta").option("checkpointLocation", "/tmp/checkpoints/silver").start("/tmp/silver_table")
+# Single WriteStream query
+query = parsed_df.writeStream \
+    .foreachBatch(write_batches) \
+    .option("checkpointLocation", "/tmp/checkpoints/main") \
+    .trigger(processingTime="30 seconds") \
+    .start()
 
-spark.streams.awaitAnyTermination()
+# Handle Failures
+try:
+    query.awaitTermination()
+except Exception:
+    print(f"Query terminated with exception: {query.exception()}")
