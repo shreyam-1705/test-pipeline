@@ -49,21 +49,21 @@ parsed_df = kafka_df.selectExpr("CAST(value AS STRING) as json_str") \
     .select(from_json("json_str", schema).alias("data")).select("data.*")
 
 # Write to Bronze
-    bronze_query = parsed_df.writeStream \
-        .format("delta") \
-        .option("checkpointLocation", "/tmp/checkpoints/bronze") \
-        .start(bronze_path)
-    
-    # Stream Bronze to Silver
-    silver_df = spark.readStream \
-        .format("delta") \
-        .load(bronze_path) \
-        .filter(col("value") > 50.0)
-    
-    silver_query = silver_df.writeStream \
-        .format("delta") \
-        .option("checkpointLocation", "/tmp/checkpoints/silver") \
-        .start(silver_path)
-    
-    print("Streaming pipeline started! Writing to Hugging Face...")
-    spark.streams.awaitAnyTermination(timeout=1800)
+bronze_query = parsed_df.writeStream \
+    .format("delta") \
+    .option("checkpointLocation", "/tmp/checkpoints/bronze") \
+    .start(bronze_path)
+
+# Stream Bronze to Silver
+silver_df = spark.readStream \
+    .format("delta") \
+    .load(bronze_path) \
+    .filter(col("value") > 50.0)
+
+silver_query = silver_df.writeStream \
+    .format("delta") \
+    .option("checkpointLocation", "/tmp/checkpoints/silver") \
+    .start(silver_path)
+
+print("Streaming pipeline started! Writing to Hugging Face...")
+spark.streams.awaitAnyTermination(timeout=1800)
