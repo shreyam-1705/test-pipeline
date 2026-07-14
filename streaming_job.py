@@ -2,6 +2,7 @@ import os
 import time
 import threading
 import sys
+import traceback
 from huggingface_hub import create_bucket, sync_bucket
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
@@ -10,13 +11,27 @@ from pyspark import SparkFiles
 
 # --- 1. THE SYNCER THREAD ---
 def sync_to_huggingface():
-    bucket_id = f"{os.getenv('HF_NAMESPACE')}/{os.getenv('HF_BUCKET_NAME')}"
+    namespace = os.getenv("HF_NAMESPACE")
+    bucket_name = os.getenv("HF_BUCKET_NAME")
     token = os.getenv("HF_TOKEN")
+    bucket_id = f"{namespace}/{bucket_name}"
 
-    # Make sure the bucket exists before we start syncing into it
-    create_bucket(bucket_id, token=token, exist_ok=True)
+    # Debug: confirm env vars actually made it into this process
+    print(f"[sync] HF_NAMESPACE={namespace} HF_BUCKET_NAME={bucket_name} "
+          f"HF_TOKEN={'set' if token else 'MISSING'}", flush=True)
 
-    print(f"Sync thread active for: hf://buckets/{bucket_id}")
+    # Retry bucket creation instead of letting one failure kill the thread forever
+    while True:
+        try:
+            create_bucket(bucket_id, token=token, exist_ok=True)
+            print(f"[sync] Bucket ready: hf://buckets/{bucket_id}", flush=True)
+            break
+        except Exception:
+            print(f"[sync] create_bucket failed, retrying in 30s:", flush=True)
+            traceback.print_exc()
+            time.sleep(30)
+
+    print(f"Sync thread active for: hf://buckets/{bucket_id}", flush=True)
     while True:
         time.sleep(60)
         try:
@@ -29,9 +44,12 @@ def sync_to_huggingface():
                         token=token,
                         ignore_patterns=["*.tmp", "*.crc", ".*"]
                     )
-            print("Sync cycle successful.")
-        except Exception as e:
-            print(f"Sync error: {e}")
+                else:
+                    print(f"[sync] {local_path} does not exist yet, skipping", flush=True)
+            print("Sync cycle successful.", flush=True)
+        except Exception:
+            print("Sync error:", flush=True)
+            traceback.print_exc()
 
 threading.Thread(target=sync_to_huggingface, daemon=True).start()
 
