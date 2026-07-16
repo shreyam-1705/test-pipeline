@@ -15,25 +15,13 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '11'
-      
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install Dependencies
         run: pip install pyspark==3.5.0 aiven-client delta-spark huggingface_hub
-
-      - name: Get GitHub Runner IP
-        id: ip
-        run: echo "ipv4=$(curl -s https://api.ipify.org)" >> $GITHUB_OUTPUT
-
-      - name: Allow Runner IP in Aiven
-        env:
-          AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
-        run: |
-          avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
-            --project ${{ vars.AIVEN_PROJECT_NAME }} \
-            -c ip_filter="['${{ steps.ip.outputs.ipv4 }}/32']"
 
       - name: Create Java Keystores
         run: |
@@ -48,14 +36,66 @@ jobs:
           KAFKA_URI: ${{ vars.KAFKA_URI }}
           HF_NAMESPACE: ${{ vars.HF_NAMESPACE }}
           HF_BUCKET_NAME: ${{ vars.HF_BUCKET_NAME }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }} 
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python streaming_job.py
+# name: 30-Min PySpark HF Pipeline
 
-      - name: Cleanup Firewall
-        if: always()
-        env:
-          AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
-        run: |
-          avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
-            --project ${{ vars.AIVEN_PROJECT_NAME }} \
-            -c ip_filter="['0.0.0.0/0']"
+# on:
+#   workflow_dispatch:
+
+# jobs:
+#   run-pipeline:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout Code
+#         uses: actions/checkout@v4
+
+#       - name: Set up Java & Python
+#         uses: actions/setup-java@v3
+#         with:
+#           distribution: 'temurin'
+#           java-version: '11'
+      
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.10'
+
+#       - name: Install Dependencies
+#         run: pip install pyspark==3.5.0 aiven-client delta-spark huggingface_hub
+
+#       - name: Get GitHub Runner IP
+#         id: ip
+#         run: echo "ipv4=$(curl -s https://api.ipify.org)" >> $GITHUB_OUTPUT
+
+#       - name: Allow Runner IP in Aiven
+#         env:
+#           AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
+#         run: |
+#           avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
+#             --project ${{ vars.AIVEN_PROJECT_NAME }} \
+#             -c ip_filter="['${{ steps.ip.outputs.ipv4 }}/32']"
+
+#       - name: Create Java Keystores
+#         run: |
+#           echo "${{ secrets.KAFKA_CA_PEM }}" > ca.pem
+#           echo "${{ secrets.KAFKA_SERVICE_CERT }}" > service.cert
+#           echo "${{ secrets.KAFKA_SERVICE_KEY }}" > service.key
+#           openssl pkcs12 -export -in service.cert -inkey service.key -out keystore.p12 -name kafka -password pass:changeit
+#           keytool -import -file ca.pem -alias CARoot -keystore truststore.jks -storepass changeit -noprompt
+
+#       - name: Run PySpark Streaming Job
+#         env:
+#           KAFKA_URI: ${{ vars.KAFKA_URI }}
+#           HF_NAMESPACE: ${{ vars.HF_NAMESPACE }}
+#           HF_BUCKET_NAME: ${{ vars.HF_BUCKET_NAME }}
+#           HF_TOKEN: ${{ secrets.HF_TOKEN }} 
+#         run: python streaming_job.py
+
+#       - name: Cleanup Firewall
+#         if: always()
+#         env:
+#           AIVEN_AUTH_TOKEN: ${{ secrets.AIVEN_TOKEN }}
+#         run: |
+#           avn service update ${{ vars.AIVEN_SERVICE_NAME }} \
+#             --project ${{ vars.AIVEN_PROJECT_NAME }} \
+#             -c ip_filter="['0.0.0.0/0']"
