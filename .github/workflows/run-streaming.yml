@@ -37,6 +37,7 @@ jobs:
           HF_NAMESPACE: ${{ vars.HF_NAMESPACE }}
           HF_BUCKET_NAME: ${{ vars.HF_BUCKET_NAME }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          RUN_DURATION_SECONDS: '1800'
         run: python streaming_job.py
 # name: 30-Min PySpark HF Pipeline
 
